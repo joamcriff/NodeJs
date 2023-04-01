@@ -2,8 +2,10 @@
 import bodyParser from "body-parser";
 import express from "express";
 import mongoose from "mongoose";
-import mongooseEncryption from "mongoose-encryption";
 import * as dotenv from 'dotenv' 
+import session from "express-session";
+import passport from "passport";
+import passportLocalMongoose from "passport-local-mongoose";
 
 dotenv.config()
 
@@ -18,13 +20,23 @@ const userSchema = new mongoose.Schema({
     password: String
 });
 
-
-userSchema.plugin(mongooseEncryption, {secret: process.env.SECRET,  encryptedFields: ['password']}); // có thể thêm các trường mã hoá trong mảng
+userSchema.plugin(passportLocalMongoose);
 
 const User = new mongoose.model("User", userSchema);
 
+passport.use(User.createStrategy());
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
+
 app.use(bodyParser.urlencoded({extended: true}));
 app.use(express.static("public"));
+app.use(session({
+    secret: "Our little secret.",
+    resave: false,
+    saveUninitialized: false
+}));
+app.use(passport.initialize());
+app.use(passport.session());
 
 app.get("/", (req, res) => {
     res.render("home");
@@ -38,35 +50,46 @@ app.get("/register", (req, res) => {
     res.render("register");
 })
 
-app.post("/register", async (req, res) => {
-    const newUser = new User({
-        email: req.body.username,
-        password: req.body.password
-    });
+app.get("/secrets", (req, res) => {
+    if(req.isAuthenticated()){
+        res.render("secrets");
+    } else {
+        res.redirect("/login");
+    }
+})
 
-    try {
-        await newUser.save({});
-        res.render("secrets");  
-    } catch (err) {
-        console.log(err)
-    }
-    finally {
-         
-    }
-    
+app.get("/logout", (req, res, next) => {
+    req.logout(function(err) {
+        if (err) { return next(err); }
+        res.redirect('/');
+      });
+});
+
+app.post("/register", async (req, res) => {
+    await User.register({username: req.body.username}, req.body.password, (err, user) => {
+        if(err) {
+            res.redirect("/register");
+        } else {
+            passport.authenticate("local")(req, res, () => {
+                res.redirect("/secrets");
+            })
+        }
+    })
 })
 
 app.post("/login", async (req, res) => {
-    const username = req.body.username;
-    const password = req.body.password;
-    try {
-        const foundUser = await User.findOne({email: username});
-        if(foundUser.password === password) {
-            res.render("secrets");
-        }
-    } catch (err) {
+   const user = new User({
+    username: req.body.username,
+    password: req.body.password
+   });
+
+   try {
+        await passport.authenticate("local")(req, res, ()=> {
+            res.redirect("/secrets");
+        })
+   } catch (err) {
         console.log(err);
-    }
+   }
 })
 
 app.listen(3000, () => {
